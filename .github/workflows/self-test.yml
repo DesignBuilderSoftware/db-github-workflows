@@ -47,7 +47,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - id: read
-        uses: ./
+        uses: ./actions/read-version
         with:
           version-file: ${{ matrix.case.file }}
           tag-prefix: ${{ matrix.case.prefix }}
@@ -92,7 +92,7 @@ jobs:
       # the wrong thing. Assert these inputs are refused outright.
       - id: read
         continue-on-error: true
-        uses: ./
+        uses: ./actions/read-version
         with:
           version-file: ${{ matrix.case.file }}
 
