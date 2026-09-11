@@ -133,18 +133,28 @@ you want to try the pinned version somewhere first.
 ## Known duplication
 
 Version-resolution logic is deliberately duplicated between
-[`release.yml`](.github/workflows/release.yml) and
-[`actions/read-version`](actions/read-version/action.yml). A reusable workflow
-cannot `uses: ./actions/...` — when called from elsewhere, `./` resolves
-against the *caller's* checkout, not this repository — and pointing it at a
-pinned tag of itself creates a bootstrapping problem. Change one, change the
-other; the self-test covers both.
+[`release.yml`](.github/workflows/release.yml) and the root
+[`action.yml`](action.yml). A reusable workflow cannot `uses: ./` — when called
+from elsewhere, `./` resolves against the *caller's* checkout, not this
+repository — and pointing it at a pinned tag of itself creates a bootstrapping
+problem. Change one, change the other; the self-test covers both.
+
+## The root slot
+
+`owner/repo@ref` resolves to `action.yml` at the repository root, and there is
+exactly one root, so only one building block can have the short form. It
+currently belongs to `read-version`.
+
+Moving it is a breaking change for every caller of the action, so it needs a
+major bump and a note in the release. Think twice before spending it: the
+reusable workflow gains nothing from the root slot, since workflows have no
+short form regardless of where they sit.
 
 ## Shared tag space
 
-`release.yml` and `actions/read-version` share one set of tags. A breaking
-change to the workflow drags the action to the next major too, even untouched:
-callers of `read-version@v1` keep working, but sit on an ageing line until
-someone cuts `v1.x` fixes for it. That is acceptable while the repo is small.
-If the two genuinely diverge, the way out is per-component tags such as
+`release.yml` and the root action share one set of tags. A breaking change to
+the workflow drags the action to the next major too, even untouched: callers of
+`db-github-workflows@v1` keep working, but sit on an ageing line until someone
+cuts `v1.x` fixes for it. That is acceptable while the repo is small. If the
+two genuinely diverge, the way out is per-component tags such as
 `read-version/v1`, not splitting the repository.

@@ -104,7 +104,7 @@ jobs:
           # and the generated notes have something to diff against.
           fetch-depth: 0
 
-      # Kept in step with actions/read-version/action.yml in this repository:
+      # Kept in step with action.yml at the root of this repository:
       # a reusable workflow cannot call a composite action stored alongside it
       # without pinning a ref, so the resolution rules live in both places.
       - name: Resolve version
