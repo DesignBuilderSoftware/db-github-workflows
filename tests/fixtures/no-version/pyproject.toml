@@ -1,0 +1,3 @@
+# Fixture: no version anywhere - resolution must fail, not default to something.
+[project]
+name = "fixture-no-version"

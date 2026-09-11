@@ -172,13 +172,13 @@ rules are identical to `release.yml`.
 
 ## Maintaining this repository
 
-The version-resolution logic is intentionally duplicated between
-`release.yml` and `actions/read-version/action.yml`. A reusable workflow cannot
-`uses: ./actions/...` — a relative path resolves against the *caller's*
-checkout, not this repository — and pointing it at a pinned tag of itself
-creates a bootstrapping problem. Change one, change the other.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how `main`, the `release/vN`
+branches and the moving `vN` tags fit together, what counts as a breaking
+change to a caller's contract, and how to test a change before tagging it.
 
-After a change worth shipping, tag it and move the major tag:
+In short: develop on a branch off `main`, let
+[`self-test.yml`](.github/workflows/self-test.yml) run against it, then tag an
+immutable version and move the major pointer.
 
 ```bash
 git tag -a v1.1.0 -m "v1.1.0" && git push origin v1.1.0
@@ -187,6 +187,11 @@ git tag -a v1.1.0 -m "v1.1.0" && git push origin v1.1.0
 ```bash
 git tag -f v1 v1.1.0 && git push origin --force v1
 ```
+
+One trap worth repeating here: version-resolution logic is deliberately
+duplicated between `release.yml` and `actions/read-version/action.yml`, because
+a reusable workflow cannot `uses: ./actions/...` — when called from elsewhere,
+`./` resolves against the caller's checkout. Change one, change the other.
 
 ## Licence
 

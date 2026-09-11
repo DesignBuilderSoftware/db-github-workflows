@@ -1,0 +1,4 @@
+# Fixture: [tool.poetry].version, the fallback when [project] is absent.
+[tool.poetry]
+name = "fixture-poetry"
+version = "9.9.9"

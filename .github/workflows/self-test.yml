@@ -1,0 +1,151 @@
+name: Self-test
+
+# Exercises this repository's own building blocks against the fixtures in
+# tests/fixtures. Within a repository a workflow may reference a sibling with a
+# local path, and `./` resolves against the current checkout - so on a branch
+# this tests *that branch's* definitions, which is the only way to try a change
+# before tagging it.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  read-version:
+    name: read-version (${{ matrix.case.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        case:
+          - name: pep621
+            file: tests/fixtures/pep621/pyproject.toml
+            prefix: v
+            version: 0.3.0
+            tag: v0.3.0
+          - name: poetry-fallback
+            file: tests/fixtures/poetry/pyproject.toml
+            prefix: v
+            version: 9.9.9
+            tag: v9.9.9
+          - name: package-json
+            file: tests/fixtures/node/package.json
+            prefix: v
+            version: 2.1.0
+            tag: v2.1.0
+          - name: plain-text
+            file: tests/fixtures/plain/VERSION
+            prefix: release-
+            version: 1.2.3
+            tag: release-1.2.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: read
+        uses: ./actions/read-version
+        with:
+          version-file: ${{ matrix.case.file }}
+          tag-prefix: ${{ matrix.case.prefix }}
+
+      - name: Assert outputs
+        env:
+          GOT_VERSION: ${{ steps.read.outputs.version }}
+          GOT_TAG: ${{ steps.read.outputs.tag }}
+          WANT_VERSION: ${{ matrix.case.version }}
+          WANT_TAG: ${{ matrix.case.tag }}
+        run: |
+          set -euo pipefail
+          failed=0
+          if [ "$GOT_VERSION" != "$WANT_VERSION" ]; then
+            echo "::error::version: got '$GOT_VERSION', want '$WANT_VERSION'"
+            failed=1
+          fi
+          if [ "$GOT_TAG" != "$WANT_TAG" ]; then
+            echo "::error::tag: got '$GOT_TAG', want '$WANT_TAG'"
+            failed=1
+          fi
+          if [ "$failed" -eq 0 ]; then
+            echo "version=$GOT_VERSION tag=$GOT_TAG as expected"
+          fi
+          exit "$failed"
+
+  read-version-rejects:
+    name: read-version rejects (${{ matrix.case.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        case:
+          - name: missing-file
+            file: tests/fixtures/does-not-exist/pyproject.toml
+          - name: no-version-declared
+            file: tests/fixtures/no-version/pyproject.toml
+    steps:
+      - uses: actions/checkout@v4
+
+      # A silent empty version would be worse than a hard failure: it would tag
+      # the wrong thing. Assert these inputs are refused outright.
+      - id: read
+        continue-on-error: true
+        uses: ./actions/read-version
+        with:
+          version-file: ${{ matrix.case.file }}
+
+      - name: Assert the action failed
+        env:
+          OUTCOME: ${{ steps.read.outcome }}
+          GOT_VERSION: ${{ steps.read.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::expected read-version to fail, but the outcome was '$OUTCOME' (version='$GOT_VERSION')"
+            exit 1
+          fi
+          echo "rejected as expected"
+
+  # End-to-end run of the release workflow down the path that creates nothing:
+  # v1.0.0 is already tagged in this repository, so this must skip. Deliberately
+  # granted only contents:read - if the skip logic ever regresses, the attempt to
+  # create a release fails loudly instead of publishing something unintended.
+  release-skips-existing-tag:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release.yml
+    with:
+      version: 1.0.0
+      fail-if-tag-exists: false
+
+  assert-release-skipped:
+    needs: release-skips-existing-tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert nothing was released
+        env:
+          CREATED: ${{ needs.release-skips-existing-tag.outputs.created }}
+          TAG: ${{ needs.release-skips-existing-tag.outputs.tag }}
+          VERSION: ${{ needs.release-skips-existing-tag.outputs.version }}
+          URL: ${{ needs.release-skips-existing-tag.outputs.url }}
+        run: |
+          set -euo pipefail
+          failed=0
+          if [ "$CREATED" != "false" ]; then
+            echo "::error::created: got '$CREATED', want 'false' - the skip path regressed"
+            failed=1
+          fi
+          if [ "$VERSION" != "1.0.0" ] || [ "$TAG" != "v1.0.0" ]; then
+            echo "::error::resolution: got version='$VERSION' tag='$TAG', want '1.0.0' / 'v1.0.0'"
+            failed=1
+          fi
+          if [ -n "$URL" ]; then
+            echo "::error::url should be empty when nothing was created, got '$URL'"
+            failed=1
+          fi
+          if [ "$failed" -eq 0 ]; then
+            echo "skipped v1.0.0 as expected; nothing created"
+          fi
+          exit "$failed"
