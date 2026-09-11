@@ -1,0 +1,63 @@
+name: Read version
+description: >-
+  Read the declared version out of a repository (pyproject.toml, package.json
+  or a plain-text file) and expose it, plus the matching tag name.
+
+inputs:
+  version-file:
+    description: >-
+      File to read the version from. pyproject.toml and package.json are
+      parsed; anything else is read as a plain-text file containing only the
+      version.
+    required: false
+    default: pyproject.toml
+  tag-prefix:
+    description: Prefix prepended to the version to form the tag.
+    required: false
+    default: v
+
+outputs:
+  version:
+    description: The version as declared, without the tag prefix.
+    value: ${{ steps.resolve.outputs.version }}
+  tag:
+    description: The tag name (prefix + version).
+    value: ${{ steps.resolve.outputs.tag }}
+
+runs:
+  using: composite
+  steps:
+    # Kept in step with the "Resolve version" step of
+    # .github/workflows/release.yml in this repository.
+    - name: Resolve version
+      id: resolve
+      shell: bash
+      env:
+        VERSION_FILE: ${{ inputs.version-file }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+      run: |
+        set -euo pipefail
+        if [ ! -f "$VERSION_FILE" ]; then
+          echo "::error::version-file '$VERSION_FILE' does not exist"
+          exit 1
+        fi
+        case "$(basename "$VERSION_FILE")" in
+          pyproject.toml)
+            version=$(python3 -c 'import pathlib, sys, tomllib; d = tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")); print(d.get("project", {}).get("version") or d.get("tool", {}).get("poetry", {}).get("version") or "")' "$VERSION_FILE")
+            ;;
+          package.json)
+            version=$(jq -er '.version' "$VERSION_FILE")
+            ;;
+          *)
+            version=$(tr -d '[:space:]' < "$VERSION_FILE")
+            ;;
+        esac
+
+        if [ -z "$version" ]; then
+          echo "::error::could not read a version from $VERSION_FILE"
+          exit 1
+        fi
+
+        echo "Resolved version $version from $VERSION_FILE"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "tag=${TAG_PREFIX}${version}" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,213 @@
+name: Release
+
+# Reusable workflow: cut a git tag and a GitHub Release from the version
+# declared in the repository, so the declared version and the tag can never
+# drift apart. Idempotent - if the tag already exists it does nothing.
+#
+# Call it from a repository with:
+#
+#   jobs:
+#     release:
+#       permissions:
+#         contents: write
+#       uses: DesignBuilderSoftware/db-github-workflows/.github/workflows/release.yml@v1
+#
+# See README.md for the full input reference.
+
+on:
+  workflow_call:
+    inputs:
+      version-file:
+        description: >-
+          File to read the version from. pyproject.toml and package.json are
+          parsed; anything else is read as a plain-text file containing only
+          the version. Ignored when `version` is set.
+        type: string
+        default: pyproject.toml
+      version:
+        description: >-
+          Explicit version (e.g. 1.2.3), for repositories that keep the version
+          somewhere this workflow cannot parse. Overrides `version-file`.
+        type: string
+        default: ''
+      tag-prefix:
+        description: Prefix prepended to the version to form the tag.
+        type: string
+        default: v
+      target:
+        description: >-
+          Commit-ish the tag points at. Defaults to the SHA that triggered the
+          calling workflow.
+        type: string
+        default: ''
+      title:
+        description: Release title. Defaults to the tag.
+        type: string
+        default: ''
+      notes-file:
+        description: >-
+          Path to a file holding the release notes. When empty, notes are
+          generated from the commits and pull requests since the last release.
+        type: string
+        default: ''
+      draft:
+        description: Create the release as a draft.
+        type: boolean
+        default: false
+      prerelease:
+        description: Mark the release as a pre-release.
+        type: boolean
+        default: false
+      fail-if-tag-exists:
+        description: >-
+          Fail instead of skipping when the tag is already present. Useful if
+          you would rather be told loudly that a version was not bumped.
+        type: boolean
+        default: false
+      runs-on:
+        description: Runner label for the release job.
+        type: string
+        default: ubuntu-latest
+    secrets:
+      token:
+        description: >-
+          Token used to create the tag and release. Optional; defaults to the
+          caller's GITHUB_TOKEN. Supply a PAT if the published release needs to
+          trigger other workflows, which GITHUB_TOKEN deliberately will not.
+        required: false
+    outputs:
+      version:
+        description: The resolved version, without the tag prefix.
+        value: ${{ jobs.release.outputs.version }}
+      tag:
+        description: The tag name (prefix + version).
+        value: ${{ jobs.release.outputs.tag }}
+      created:
+        description: "'true' if a release was created, 'false' if it already existed."
+        value: ${{ jobs.release.outputs.created }}
+      url:
+        description: URL of the release; empty when nothing was created.
+        value: ${{ jobs.release.outputs.url }}
+
+jobs:
+  release:
+    runs-on: ${{ inputs.runs-on }}
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      created: ${{ steps.create.outputs.created || 'false' }}
+      url: ${{ steps.create.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history and tags, so the "does this tag exist" check is honest
+          # and the generated notes have something to diff against.
+          fetch-depth: 0
+
+      # Kept in step with actions/read-version/action.yml in this repository:
+      # a reusable workflow cannot call a composite action stored alongside it
+      # without pinning a ref, so the resolution rules live in both places.
+      - name: Resolve version
+        id: resolve
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+          VERSION_FILE: ${{ inputs.version-file }}
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+        run: |
+          set -euo pipefail
+          if [ -n "$VERSION_INPUT" ]; then
+            version="$VERSION_INPUT"
+            origin="the version input"
+          elif [ ! -f "$VERSION_FILE" ]; then
+            echo "::error::version-file '$VERSION_FILE' does not exist"
+            exit 1
+          else
+            origin="$VERSION_FILE"
+            case "$(basename "$VERSION_FILE")" in
+              pyproject.toml)
+                version=$(python3 -c 'import pathlib, sys, tomllib; d = tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")); print(d.get("project", {}).get("version") or d.get("tool", {}).get("poetry", {}).get("version") or "")' "$VERSION_FILE")
+                ;;
+              package.json)
+                version=$(jq -er '.version' "$VERSION_FILE")
+                ;;
+              *)
+                version=$(tr -d '[:space:]' < "$VERSION_FILE")
+                ;;
+            esac
+          fi
+
+          if [ -z "$version" ]; then
+            echo "::error::could not read a version from $origin"
+            exit 1
+          fi
+
+          echo "Resolved version $version from $origin"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG_PREFIX}${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether the tag already exists
+        id: check
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+          FAIL_IF_EXISTS: ${{ inputs.fail-if-tag-exists }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            if [ "$FAIL_IF_EXISTS" = "true" ]; then
+              echo "::error::tag $TAG already exists - was the version bumped?"
+              exit 1
+            fi
+            echo "Tag $TAG already exists - nothing to do."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tag and release
+        id: create
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.token || secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          TARGET: ${{ inputs.target || github.sha }}
+          TITLE: ${{ inputs.title || steps.resolve.outputs.tag }}
+          NOTES_FILE: ${{ inputs.notes-file }}
+          DRAFT: ${{ inputs.draft }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          args=( "$TAG" --target "$TARGET" --title "$TITLE" )
+          if [ -n "$NOTES_FILE" ]; then
+            if [ ! -f "$NOTES_FILE" ]; then
+              echo "::error::notes-file '$NOTES_FILE' does not exist"
+              exit 1
+            fi
+            args+=( --notes-file "$NOTES_FILE" )
+          else
+            args+=( --generate-notes )
+          fi
+          if [ "$DRAFT" = "true" ]; then
+            args+=( --draft )
+          fi
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=( --prerelease )
+          fi
+
+          url=$(gh release create "${args[@]}")
+          echo "Created $TAG -> $url"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: always() && steps.resolve.outcome == 'success'
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+          CREATED: ${{ steps.create.outputs.created || 'false' }}
+          URL: ${{ steps.create.outputs.url }}
+        run: |
+          set -euo pipefail
+          if [ "$CREATED" = "true" ]; then
+            echo "Released **$TAG** - $URL" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No release created; **$TAG** already exists." >> "$GITHUB_STEP_SUMMARY"
+          fi
