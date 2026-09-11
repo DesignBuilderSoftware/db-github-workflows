@@ -1,0 +1,4 @@
+# Fixture: PEP 621 [project].version - the db-process shape.
+[project]
+name = "fixture-pep621"
+version = "0.3.0"
