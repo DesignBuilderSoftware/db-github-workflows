@@ -13,17 +13,44 @@ v1.0.0, v1.1.0, v2.0.0  immutable release tags; never move
 v1, v2                  moving pointers; this is what callers pin
 ```
 
-Callers pin `@v1`. You re-point `v1` at each backwards-compatible release, so
-they pick up fixes without editing anything. `workflow_call` resolves the ref
-at run time, which is why moving `v1` takes effect everywhere on the next run —
-and why the v1/v2 line has to be drawn on the caller's contract rather than on
-how much code changed.
+The short version: **`v1.1.0` is a fact, `v1` is a subscription.** `v1.1.0`
+names one exact commit permanently, so a caller can freeze and so you can say
+what shipped. `v1` is a pointer you re-aim at the newest compatible `v1.x.y`,
+so callers pick up fixes without editing anything.
+
+`workflow_call` resolves the ref at run time, which is why moving `v1` takes
+effect everywhere on the next run — and why the v1/v2 line has to be drawn on
+the caller's contract rather than on how much code changed.
+
+Note what follows from that: **merging to `main` releases nothing.** `v1` moves
+only when you move it, so callers are unaffected by anything on `main` until
+you do. Docs-only changes often never get a tag at all; they ride along with
+the next real release.
+
+### Who pins what
+
+| Pin | Who | Why |
+|---|---|---|
+| `@v1` | the default for DesignBuilder repos | Fixes arrive automatically; the caller is never edited |
+| `@v1.1.0` | a repository that must not change under it | Release-critical, or reproducing an old build |
+| `@<40-char sha>` | supply-chain hardening | Immune even to a tag being moved maliciously |
+
+`@v1` is the right default while both ends are ours. Dependabot's
+`github-actions` ecosystem can bump pinned refs, which is what makes SHA
+pinning practical rather than a maintenance burden, if a consumer ever wants
+that.
 
 ## Deciding between a minor bump and a new major
 
 The contract is whatever a calling repository has written in **its** YAML.
 Break that and it is a new major. Everything else is a minor or patch, and
 `v1` moves.
+
+| Change | Tag | Pointer |
+|---|---|---|
+| Bug fix, no interface change | `v1.1.1` | move `v1` |
+| New optional input, new output | `v1.2.0` | move `v1` |
+| Breaks the caller's contract | `v2.0.0` | create `v2`; **`v1` stops moving** |
 
 Forces a new major:
 
@@ -70,6 +97,11 @@ line, no maintenance branch.
 v1 patch can no longer be cut from it. Create `release/v1` from the last v1
 commit — do this lazily, at the first v1 fix you actually need, not
 pre-emptively.
+
+`v1` is not deleted when `v2` arrives. It freezes at the last `v1.x.y`, and
+anyone pinned to it keeps working on that code indefinitely; it moves again
+only if you cut a maintenance release. That is the point of the pointer — a
+caller that never upgrades never breaks.
 
 **After that.** v1 fixes land on `release/v1`, tag `v1.x.y`, move `v1`. v2 work
 lands on `main`, tag `v2.x.y`, move `v2`. Fixes affecting both get
@@ -128,7 +160,31 @@ git tag -f v1 v1.1.0 && git push origin --force v1
 ```
 
 Step 4 is the one that reaches every caller, so leave a gap between 3 and 4 if
-you want to try the pinned version somewhere first.
+you want to try the pinned version somewhere first. Point one repository at
+`@v1.2.0`, watch a real release go through, then move the pointer.
+
+Two conventions worth stating, because both are choices rather than
+requirements:
+
+- **Only `vN` pointers.** No moving `v1.1`. `actions/checkout` and friends
+  publish only the major, and each extra tier is another thing to move
+  correctly.
+- **Tags, not GitHub Releases.** Nothing here publishes a Release object at
+  present. Adding `gh release create v1.2.0 --generate-notes` to step 3 would
+  give a changelog answerable from the UI; skipping it keeps the ritual to two
+  commands. Either is fine, but do it consistently.
+
+## Once someone pins
+
+The rules above are advisory while nothing references this repository. From the
+first real consumer they are not:
+
+- Never move or delete a `vX.Y.Z` tag. The tags were reset once, early on, when
+  nothing referenced them; that is no longer available.
+- `v1` is *meant* to move — that is why step 4 needs `--force`. Moving it is
+  routine, moving `v1.2.0` is not.
+- Do not retroactively renumber. A wrong-but-shipped version number is far
+  cheaper than a moved one.
 
 ## Known duplication
 
