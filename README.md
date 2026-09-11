@@ -9,32 +9,29 @@ Two mechanisms are on offer, and the difference matters when you pick one:
 | | Lives in | Referenced as | Use when |
 |---|---|---|---|
 | **Reusable workflow** | `.github/workflows/` | `uses:` on a **job** | You want a whole job — checkout, runner, permissions and all |
-| **Composite action** | `action.yml` at the root | `uses:` on a **step** | You want one step inside a job you already have |
+| **Composite action** | `actions/<name>/` | `uses:` on a **step** | You want one step inside a job you already have |
 
 ## Contents
 
 - [`.github/workflows/release.yml`](.github/workflows/release.yml) — reusable
   workflow. Tags and releases the version declared in the repository.
-  Referenced as `…/db-github-workflows/.github/workflows/release.yml@v1`.
-- [`action.yml`](action.yml) — composite action, `read-version`. Reads the
-  declared version and the tag name it implies. Referenced as
-  `DesignBuilderSoftware/db-github-workflows@v1`.
+- [`actions/read-version`](actions/read-version/action.yml) — composite action.
+  Reads the declared version and the tag name it implies.
 
-### Why only one of them gets the short form
+### Why nothing here is referenced as `owner/repo@v1`
 
-`owner/repo@v1` is an **action** reference: it resolves to `action.yml` at the
+That short form is an **action** reference: it resolves to `action.yml` at the
 repository root, and a repository has exactly one root. Reusable workflows have
 no short form at all — GitHub requires the full
 `owner/repo/.github/workflows/file.yml@ref` path, and they must live in
 `.github/workflows`.
 
-So the asymmetry is not an oversight. The root slot went to `read-version`
-because releasing is better served by a workflow: the caller gets a one-line
-job instead of hand-writing `runs-on`, `permissions`, `checkout` and
-`fetch-depth: 0`. That last one matters — a shallow clone does not error, it
-just makes the tag-exists check find nothing and publish a duplicate release.
-Encapsulating it is worth the longer path, which is written once per repository
-and then never touched.
+The root here is deliberately left empty. This repository is a collection that
+expects to hold more workflows and more actions, and promoting one of them to
+the root would make `db-github-workflows@v1` mean that single thing — right for
+a repository that *is* one action, misleading for one that is not. Every
+building block is referenced by its own path instead, so they all read the
+same way and adding the next one changes nothing about the existing ones.
 
 ## Versioning and pinning
 
@@ -156,7 +153,7 @@ jobs:
       - run: echo "Shipped ${{ needs.release.outputs.tag }} at ${{ needs.release.outputs.url }}"
 ```
 
-## `read-version` (the root action)
+## `actions/read-version`
 
 Use this when you only need the version inside a job you already have — a
 build that stamps artefacts, say — rather than the whole release job.
@@ -169,7 +166,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - id: version
-        uses: DesignBuilderSoftware/db-github-workflows@v1
+        uses: DesignBuilderSoftware/db-github-workflows/actions/read-version@v1
         with:
           version-file: pyproject.toml   # default
           tag-prefix: v                  # default
@@ -210,9 +207,9 @@ git tag -f v1 v1.1.0 && git push origin --force v1
 ```
 
 One trap worth repeating here: version-resolution logic is deliberately
-duplicated between `release.yml` and the root `action.yml`, because a reusable
-workflow cannot `uses: ./` — when called from elsewhere, `./` resolves against
-the caller's checkout. Change one, change the other.
+duplicated between `release.yml` and `actions/read-version/action.yml`, because
+a reusable workflow cannot `uses: ./actions/...` — when called from elsewhere,
+`./` resolves against the caller's checkout. Change one, change the other.
 
 ## Licence
 
